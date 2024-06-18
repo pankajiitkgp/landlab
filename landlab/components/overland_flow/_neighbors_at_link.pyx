@@ -49,54 +49,6 @@ def neighbors_at_link(
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
-def fill_parallel_links_at_link(
-    cython.integral[:, :] out,
-    shape,
-):
-    cdef int n_rows = shape[0]
-    cdef int n_cols = shape[1]
-    cdef int links_per_row = 2 * shape[1] - 1
-    cdef int row, col
-    cdef int link
-
-    # Horizontal links
-    for row in prange(n_rows, nogil=True, schedule="static"):
-        link = row * links_per_row
-        out[link, 0] = -1
-        out[link, 1] = link + 1
-        link = link + 1
-        for col in range(1, n_cols - 2):
-            out[link, 0] = link - 1
-            out[link, 1] = link + 1
-            link = link + 1
-        out[link, 0] = link - 1
-        out[link, 1] = -1
-
-    # First row of vertical links
-    link = n_cols - 1
-    for col in range(n_cols):
-        out[link, 0] = -1
-        out[link, 1] = link + links_per_row
-        link = link + 1
-
-    # Vertical links
-    for row in prange(1, n_rows - 1, nogil=True, schedule="static"):
-        link = row * links_per_row + n_cols - 1
-        for col in range(n_cols):
-            out[link, 0] = link - links_per_row
-            out[link, 1] = link + links_per_row
-            link = link + 1
-
-    # Last row of vertical links
-    link = (n_rows - 2) * links_per_row + n_cols - 1
-    for col in range(n_cols):
-        out[link, 0] = link - links_per_row
-        out[link, 1] = -1
-        link = link + 1
-
-
-@cython.boundscheck(False)
-@cython.wraparound(False)
 @cython.cdivision(True)
 def calc_discharge_at_link(
     shape,
