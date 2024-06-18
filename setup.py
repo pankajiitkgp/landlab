@@ -49,6 +49,7 @@ cython_files = (
     "landlab/grid/cfuncs.pyx",
     "landlab/grid/ext/raster_divergence.pyx",
     "landlab/grid/ext/raster_gradient.pyx",
+    "landlab/grid/ext/raster_mappers.pyx",
     "landlab/layers/ext/eventlayers.pyx",
     "landlab/utils/_matrix.pyx",
     "landlab/utils/ext/jaggedarray.pyx",
