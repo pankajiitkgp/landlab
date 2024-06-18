@@ -7,16 +7,14 @@ from landlab.grid.ext.raster_mappers import map_max_of_link_nodes_to_link
 from landlab.grid.mappers import (
     map_max_of_link_nodes_to_link as map_max_of_link_nodes_to_link_slow,
 )
-from landlab.grid.raster_mappers import (
-    map_max_of_inlinks_to_node,
-    map_max_of_outlinks_to_node,
-    map_mean_of_inlinks_to_node,
-    map_mean_of_outlinks_to_node,
-    map_min_of_inlinks_to_node,
-    map_min_of_outlinks_to_node,
-    map_sum_of_inlinks_to_node,
-    map_sum_of_outlinks_to_node,
-)
+from landlab.grid.raster_mappers import map_max_of_inlinks_to_node
+from landlab.grid.raster_mappers import map_max_of_outlinks_to_node
+from landlab.grid.raster_mappers import map_mean_of_inlinks_to_node
+from landlab.grid.raster_mappers import map_mean_of_outlinks_to_node
+from landlab.grid.raster_mappers import map_min_of_inlinks_to_node
+from landlab.grid.raster_mappers import map_min_of_outlinks_to_node
+from landlab.grid.raster_mappers import map_sum_of_inlinks_to_node
+from landlab.grid.raster_mappers import map_sum_of_outlinks_to_node
 
 
 def map_max_of_link_nodes_to_link_fast(grid, value_at_node, out=None):

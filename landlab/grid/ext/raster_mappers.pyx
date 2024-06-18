@@ -1,5 +1,4 @@
 cimport cython
-
 from cython.parallel cimport prange
 
 ctypedef fused float_or_int:
