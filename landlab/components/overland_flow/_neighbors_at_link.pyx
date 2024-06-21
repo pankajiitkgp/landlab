@@ -5,6 +5,7 @@ cimport numpy as np
 from cython.parallel cimport prange
 from libc.math cimport fabs
 from libc.math cimport powf
+from libc.math cimport sqrt
 
 ctypedef fused id_t:
     cython.integral
@@ -64,12 +65,9 @@ def calc_discharge_at_link(
     cdef long n_cols = shape[1]
     cdef long horizontal_links_per_row = n_cols - 1
     cdef long vertical_links_per_row = n_cols
-    cdef long links_per_row = horizontal_links_per_row + vertical_links_per_row
     cdef long n_links = horizontal_links_per_row * n_rows + vertical_links_per_row * (n_rows - 1)
-    cdef long row
-    cdef long first_link
     cdef long link
-    cdef np.ndarray[cython.floating, ndim=1] q_mean_at_link = np.empty_like(n_links)
+    cdef np.ndarray[cython.floating, ndim=1] q_mean_at_link = np.ones_like(q_at_link)
 
     weighted_mean_of_parallel_links(
         shape,
@@ -78,14 +76,43 @@ def calc_discharge_at_link(
         q_mean_at_link,
     )
 
-    for row in prange(0, n_rows - 1, nogil=True, schedule="static"):
-        first_link = links_per_row * row
-        for link in range(first_link, first_link + links_per_row):
-            q_at_link[link] = (
-                q_mean_at_link[link] - g * dt * h_at_link[link] * water_slope_at_link[link]
-            ) * powf(h_at_link[link], 7.0 / 3.0) / (
-                g * dt * mannings_at_link[link] ** 2.0 * fabs(q_at_link[link])
+    for link in prange(n_links, nogil=True, schedule="static"):
+        q_at_link[link] = powf(h_at_link[link], 7.0 / 3.0) * (
+            q_mean_at_link[link]
+            - g * dt * h_at_link[link] * water_slope_at_link[link]
+        ) / (
+            powf(h_at_link[link], 7.0 / 3.0)
+            + g * dt * mannings_at_link[link] ** 2 * fabs(q_at_link[link])
+        )
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.cdivision(True)
+def calc_discharge_at_some_links(
+    cython.floating [:] q_at_link,
+    cython.floating [:] q_mean_at_link,
+    const cython.floating [:] h_at_link,
+    const cython.floating [:] water_slope_at_link,
+    const cython.floating [:] mannings_at_link,
+    const id_t [:] links,
+    const double g,
+    const double dt,
+):
+    cdef long n_links = len(links)
+    cdef long link
+    cdef long i
+
+    for i in prange(n_links, nogil=True, schedule="static"):
+        link = links[i]
+
+        q_at_link[link] = (
+            q_mean_at_link[link] - g * dt * h_at_link[link] * water_slope_at_link[link]
+        ) / (
+            1.0 + g * dt * mannings_at_link[link] ** 2 * fabs(q_at_link[link]) / powf(
+                h_at_link[link], 7.0 / 3.0
             )
+        )
 
 
 @cython.boundscheck(False)
@@ -112,6 +139,36 @@ def sum_parallel_links(
         for col in range(n_cols):
             out[link] = value_at_link[link - links_per_row] + value_at_link[link + links_per_row]
             link = link + 1
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+def weighted_mean_of_parallel_links_(
+    shape,
+    const double weight,
+    const cython.floating [:] value_at_link,
+    # const id_t [:] links,
+    const id_t [:, :] parallel_links,
+    cython.floating [:] out,
+):
+    cdef long n_links = len(parallel_links)
+    cdef long i
+    cdef long left
+    cdef long center
+    cdef long right
+
+    for i in prange(n_links, nogil=True, schedule="static"):
+        # link = links[i]
+        # left = parallel_links[link, 0]
+        # right = parallel_links[link, 1]
+
+        left = parallel_links[i, 0]
+        center = parallel_links[i, 1]
+        right = parallel_links[i, 2]
+
+        out[i] = weight * value_at_link[center] + (1.0 - weight) * (
+            value_at_link[left] + value_at_link[right]
+        )
 
 
 @cython.boundscheck(False)
@@ -192,3 +249,86 @@ cdef cython.floating _calc_weighted_mean(
     cython.floating weight,
 ) noexcept nogil:
     return weight * value_at_center + (1.0 - weight) * 0.5 * (value_at_left + value_at_right)
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+def calc_bates_flow_height_at_some_links(
+    const cython.floating [:] z_at_node,
+    const cython.floating [:] h_at_node,
+    const id_t [:, :] nodes_at_link,
+    const id_t [:] links,
+    cython.floating [:] out_at_link,
+):
+    """
+    Per Bates et al., 2010, this solution needs to find difference
+    between the highest water surface in the two cells and the
+    highest bed elevation
+    """
+    cdef long n_links = len(links)
+    cdef long i
+    cdef long link
+    cdef long head
+    cdef long tail
+
+    for i in prange(n_links, nogil=True, schedule="static"):
+        link = links[i]
+        tail = nodes_at_link[link, 0]
+        head = nodes_at_link[link, 1]
+
+        out_at_link[link] = max(
+            h_at_node[tail] + z_at_node[tail],
+            h_at_node[head] + z_at_node[head],
+        ) - max(z_at_node[tail], z_at_node[head])
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.cdivision(True)
+def adjust_supercritial_discharge(
+    cython.floating [:] q_at_link,
+    const cython.floating [:] h_at_link,
+    const id_t [:] links,
+    const double g,
+    const double froude,
+):
+    cdef long n_links = len(links)
+    cdef long i
+    cdef long link
+    cdef double root_g = np.sqrt(g)
+    cdef double c
+
+    for i in prange(n_links, nogil=True, schedule="static"):
+        link = links[i]
+
+        c = h_at_link[link] * sqrt(h_at_link[link]) * root_g
+
+        if fabs(q_at_link[link]) > froude * c:
+            if q_at_link[link] < 0.0:
+                q_at_link[link] = -c * froude
+            else:
+                q_at_link[link] = c * froude
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.cdivision(True)
+def adjust_unstable_discharge(
+    cython.floating [:] q_at_link,
+    const cython.floating [:] h_at_link,
+    const id_t [:] links,
+    const double dx,
+    const double dt,
+):
+    cdef long n_links = len(links)
+    cdef long i
+    cdef long link
+
+    for i in prange(n_links, nogil=True, schedule="static"):
+        link = links[i]
+
+        if fabs(q_at_link[link]) * dt / dx > 0.25 * h_at_link[link]:
+            if q_at_link[link] < 0.0:
+                q_at_link[link] = -0.2 * h_at_link[link] * dx / dt
+            else:
+                q_at_link[link] = 0.2 * h_at_link[link] * dx / dt
