@@ -63,9 +63,7 @@ def calc_discharge_at_link(
 ):
     cdef long n_rows = shape[0]
     cdef long n_cols = shape[1]
-    cdef long horizontal_links_per_row = n_cols - 1
-    cdef long vertical_links_per_row = n_cols
-    cdef long n_links = horizontal_links_per_row * n_rows + vertical_links_per_row * (n_rows - 1)
+    cdef long n_links = (n_cols - 1) * n_rows + n_cols * (n_rows - 1)
     cdef long link
     cdef np.ndarray[cython.floating, ndim=1] q_mean_at_link = np.ones_like(q_at_link)
 
@@ -91,7 +89,7 @@ def calc_discharge_at_link(
 @cython.cdivision(True)
 def calc_discharge_at_some_links(
     cython.floating [:] q_at_link,
-    cython.floating [:] q_mean_at_link,
+    const cython.floating [:] q_mean_at_link,
     const cython.floating [:] h_at_link,
     const cython.floating [:] water_slope_at_link,
     const cython.floating [:] mannings_at_link,
@@ -137,38 +135,11 @@ def sum_parallel_links(
     for row in prange(1, n_rows - 2, nogil=True, schedule="static"):
         link = row * links_per_row + n_cols - 1
         for col in range(n_cols):
-            out[link] = value_at_link[link - links_per_row] + value_at_link[link + links_per_row]
+            out[link] = (
+                value_at_link[link - links_per_row]
+                + value_at_link[link + links_per_row]
+            )
             link = link + 1
-
-
-@cython.boundscheck(False)
-@cython.wraparound(False)
-def weighted_mean_of_parallel_links_(
-    shape,
-    const double weight,
-    const cython.floating [:] value_at_link,
-    # const id_t [:] links,
-    const id_t [:, :] parallel_links,
-    cython.floating [:] out,
-):
-    cdef long n_links = len(parallel_links)
-    cdef long i
-    cdef long left
-    cdef long center
-    cdef long right
-
-    for i in prange(n_links, nogil=True, schedule="static"):
-        # link = links[i]
-        # left = parallel_links[link, 0]
-        # right = parallel_links[link, 1]
-
-        left = parallel_links[i, 0]
-        center = parallel_links[i, 1]
-        right = parallel_links[i, 2]
-
-        out[i] = weight * value_at_link[center] + (1.0 - weight) * (
-            value_at_link[left] + value_at_link[right]
-        )
 
 
 @cython.boundscheck(False)
@@ -248,7 +219,9 @@ cdef cython.floating _calc_weighted_mean(
     cython.floating value_at_right,
     cython.floating weight,
 ) noexcept nogil:
-    return weight * value_at_center + (1.0 - weight) * 0.5 * (value_at_left + value_at_right)
+    return weight * value_at_center + (1.0 - weight) * 0.5 * (
+        value_at_left + value_at_right
+    )
 
 
 @cython.boundscheck(False)
@@ -332,3 +305,32 @@ def adjust_unstable_discharge(
                 q_at_link[link] = -0.2 * h_at_link[link] * dx / dt
             else:
                 q_at_link[link] = 0.2 * h_at_link[link] * dx / dt
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+def update_water_depths(
+    const cython.floating [:] q_at_node,
+    cython.floating [:] h_at_node,
+    const cython.floating [:] rainfall_rate_at_node,
+    const id_t [:] nodes,
+    const double dt,
+):
+    """
+    calculate the change in water depths on all core nodes by finding the
+    difference between inputs (rainfall) and the inputs/outputs (flux
+    divergence of discharge)
+    """
+    cdef long n_nodes = len(nodes)
+    cdef long i
+    cdef long node
+
+    for i in prange(n_nodes, nogil=True, schedule="static"):
+        node = nodes[i]
+
+        h_at_node[node] = h_at_node[node] + (
+            rainfall_rate_at_node[node] - q_at_node[node]
+        ) * dt
+
+        if h_at_node[node] < 0.0:
+            h_at_node[node] = 0.0
