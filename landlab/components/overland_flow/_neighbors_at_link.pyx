@@ -258,7 +258,7 @@ def calc_bates_flow_height_at_some_links(
 @cython.boundscheck(False)
 @cython.wraparound(False)
 @cython.cdivision(True)
-def adjust_supercritial_discharge(
+def adjust_supercritical_discharge(
     cython.floating [:] q_at_link,
     const cython.floating [:] h_at_link,
     const id_t [:] links,
@@ -296,15 +296,17 @@ def adjust_unstable_discharge(
     cdef long n_links = len(links)
     cdef long i
     cdef long link
+    cdef double dx_over_dt = dx / dt
+    cdef double four_dt_over_dx = 4.0 * dt / dx
 
     for i in prange(n_links, nogil=True, schedule="static"):
         link = links[i]
 
-        if fabs(q_at_link[link]) * dt / dx > 0.25 * h_at_link[link]:
+        if fabs(q_at_link[link] * four_dt_over_dx) > h_at_link[link]:
             if q_at_link[link] < 0.0:
-                q_at_link[link] = -0.2 * h_at_link[link] * dx / dt
+                q_at_link[link] = - h_at_link[link] * dx_over_dt * 0.2
             else:
-                q_at_link[link] = 0.2 * h_at_link[link] * dx / dt
+                q_at_link[link] = h_at_link[link] * dx_over_dt * 0.2
 
 
 @cython.boundscheck(False)
