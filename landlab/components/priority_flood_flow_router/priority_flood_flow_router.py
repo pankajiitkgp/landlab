@@ -22,12 +22,11 @@ import numpy.matlib as npm
 from landlab import Component
 from landlab import FieldError
 from landlab import RasterModelGrid
+from landlab.components.priority_flood_flow_router.cfuncs import _accumulate_flow_d8
+from landlab.components.priority_flood_flow_router.cfuncs import _route_flow_d8
 from landlab.grid.nodestatus import NodeStatus
 from landlab.utils.return_array import return_array_at_node
-
-from ...utils.suppress_output import suppress_output
-from .cfuncs import _D8_FlowAcc
-from .cfuncs import _D8_flowDir
+from landlab.utils.suppress_output import suppress_output
 
 # Codes for depression status
 _UNFLOODED = 0
@@ -393,9 +392,8 @@ class PriorityFloodFlowRouter(Component):
         self._surface = surface
         self._surface_values = return_array_at_node(grid, surface)
 
-        node_cell_area = self._grid.cell_area_at_node.copy()
-        node_cell_area[self._grid.closed_boundary_nodes] = 0.0
-        self._node_cell_area = node_cell_area
+        self._node_cell_area = self._grid.cell_area_at_node.copy()
+        self._node_cell_area[self._grid.closed_boundary_nodes] = 0.0
         self._runoff_rate = runoff_rate
 
         if (flow_metric in PSINGLE_FMs) or (flow_metric in PMULTIPLE_FMs):
@@ -714,83 +712,57 @@ class PriorityFloodFlowRouter(Component):
         None.
 
         """
-        c = self.grid.number_of_node_columns
-        dx = self.grid.dx
-        activeCells = np.array(
-            self._grid.status_at_node != NodeStatus.CLOSED + 0, dtype=int
-        )
-        receivers = np.array(self.grid.status_at_node, dtype=int)
-        distance_receiver = np.zeros((receivers.shape), dtype=float)
-        cores = self.grid.core_nodes
-        activeCores = cores[activeCells[cores] == 1]
-        # Make boundaries to save time with conditionals in c loops
-        receivers[np.nonzero(self._grid.status_at_node)] = -1
-        steepest_slope = np.zeros((receivers.shape), dtype=float)
-        el_dep_free = self._depression_free_dem.reshape(self.grid.number_of_nodes)
-        el_ori = self._surface_values
-        dist = np.multiply(
-            [1, 1, 1, 1, np.sqrt(2), np.sqrt(2), np.sqrt(2), np.sqrt(2)], dx
-        )
-        ngb = np.zeros((8,), dtype=int)
-        el_d = np.zeros((8,), dtype=float)
+        is_active_node = self._grid.status_at_node != NodeStatus.CLOSED
+        active_nodes = self.grid.core_nodes[is_active_node[self.grid.core_nodes]]
 
-        # Links
-        adj_link = np.array(self._grid.d8s_at_node, dtype=int)
-        recvr_link = np.zeros((receivers.shape), dtype=int) - 1
+        recvr_link = np.full(self._grid.number_of_nodes, -1, dtype=int)
+        receivers = np.full(self._grid.number_of_nodes, -1, dtype=int)
+        distance_receiver = np.zeros(self._grid.number_of_nodes, dtype=float)
+        steepest_slope = np.zeros(self._grid.number_of_nodes, dtype=float)
 
-        _D8_flowDir(
+        _route_flow_d8(
+            self._grid.shape,
+            (self._grid.dx, self._grid.dy),
             receivers,
             distance_receiver,
             steepest_slope,
-            np.array(el_dep_free),
-            el_ori,
-            dist,
-            ngb,
-            activeCores,
-            activeCells,
-            el_d,
-            c,
-            dx,
-            adj_link,
+            self._depression_free_dem.reshape(self.grid.number_of_nodes),
+            self._surface_values,
+            active_nodes,
+            is_active_node.view(np.int8),
+            self._grid.d8s_at_node,
             recvr_link,
         )
 
-        # Calcualte flow acc
-        do_FA = False
-        if hill_flow:
-            if self._accumulate_flow_hill:
-                do_FA = True
-                a = self._hill_drainage_area
-                q = self._hill_discharges
-        else:
-            if self._accumulate_flow:
-                do_FA = True
-                a = self._drainage_area
-                q = self._discharges
-
-        if do_FA:
-            if any(self.grid.at_node["water__unit_flux_in"] != 1):
-                wg_q = (
+        # Calcualte flow accumulation
+        if (hill_flow and self._accumulate_flow_hill) or (
+            not hill_flow and self._accumulate_flow
+        ):
+            if np.any(~np.isclose(self.grid.at_node["water__unit_flux_in"], 1.0)):
+                dis = (
                     self.grid.at_node["water__unit_flux_in"]
                     * self.grid.dx
                     * self.grid.dx
                 )
                 # Only core nodes (status == 0) need to receive a weight
-                wg_q[np.nonzero(self._grid.status_at_node)] = NodeStatus.CORE
-                dis = wg_q
+                dis[self.grid.status_at_node != NodeStatus.CORE] = 0.0
 
             else:
-                dis = np.full(self.grid.number_of_nodes, self._node_cell_area)
+                dis = self._node_cell_area.copy()
 
-            da = np.array(self._node_cell_area)
+            da = self._node_cell_area.copy()
             stack_flip = np.flip(self._sort)
             # Filter out donors giving to receivers being -1
             stack_flip = stack_flip[receivers[stack_flip] != -1]
 
-            _D8_FlowAcc(da, dis, stack_flip, receivers)
+            _accumulate_flow_d8(da, dis, stack_flip, receivers)
 
-            a[:] = da
-            q[:] = dis
+            if hill_flow and self._accumulate_flow_hill:
+                self._hill_drainage_area[:] = da
+                self._hill_discharges[:] = dis
+            else:
+                self._drainage_area[:] = da
+                self._discharges[:] = dis
 
         # Closed nodes flow to themselves
         val = np.arange(0, receivers.shape[0])
