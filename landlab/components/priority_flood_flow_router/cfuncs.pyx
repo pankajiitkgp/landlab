@@ -1,104 +1,125 @@
-import numpy as np
+cimport cython
+from libc.math cimport sqrt
+from libc.stdint cimport int8_t
 
-cimport numpy as np
+from cython.parallel import prange
 
-DTYPE_INT = int
-ctypedef np.int_t DTYPE_INT_t
-
-DTYPE_FLOAT = np.double
-ctypedef np.double_t DTYPE_FLOAT_t
+ctypedef fused id_t:
+    cython.integral
+    long long
 
 
-cpdef _D8_flowDir(
-    np.ndarray[DTYPE_INT_t, ndim=1] receivers,
-    np.ndarray[DTYPE_FLOAT_t, ndim=1] distance_receiver,
-    np.ndarray[DTYPE_FLOAT_t, ndim=1] steepest_slope,
-    np.ndarray[DTYPE_FLOAT_t, ndim=1] el_dep_free,
-    np.ndarray[DTYPE_FLOAT_t, ndim=1] el_ori,
-    np.ndarray[DTYPE_FLOAT_t, ndim=1] dist,
-    np.ndarray[DTYPE_INT_t, ndim=1] ngb,
-    np.ndarray[DTYPE_INT_t, ndim=1] activeCores,
-    np.ndarray[DTYPE_INT_t, ndim=1] activeCells,
-    np.ndarray[DTYPE_FLOAT_t, ndim=1] el_d,
-    DTYPE_INT_t c,
-    DTYPE_FLOAT_t dx,
-    np.ndarray[DTYPE_INT_t, ndim=2] adj_link ,
-    np.ndarray[DTYPE_INT_t, ndim=1] rec_link,
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.cdivision(True)
+cpdef _route_flow_d8(
+    shape,
+    xy_spacing,
+    id_t [:] receivers,
+    cython.floating [:] distance_receiver,
+    cython.floating [:] steepest_slope,
+    const cython.floating [:] z_at_node,
+    const cython.floating [:] z_original,
+    const id_t [:] nodes,
+    const int8_t [:] is_active_cell,
+    const id_t [:, :] adj_link,
+    id_t [:] receiver_link,
 ):
-    """
-    Calcualte D8 flow dirs
-    """
-    cdef int idx, i
+    """Calcualte D8 flow dirs"""
+    cdef long n_cols = shape[1]
+    cdef long n_nodes = len(nodes)
+    cdef double dx = xy_spacing[0]
+    cdef double dy = xy_spacing[1]
+    cdef long[8] neighbor = [
+        1, n_cols, -1, -n_cols, n_cols + 1, n_cols - 1, -n_cols - 1, -n_cols + 1
+    ]
+    cdef double diagonal_distance = sqrt(dx*dx + dy*dy)
+    cdef double[8] one_over_distance_to_neighbor = [
+        1.0 / dx,
+        1.0 / dy,
+        1.0 / dx,
+        1.0 / dy,
+        1.0 / diagonal_distance,
+        1.0 / diagonal_distance,
+        1.0 / diagonal_distance,
+        1.0 / diagonal_distance,
+    ]
+    cdef long i
+    cdef long node
+    cdef long offset
+    cdef long n
+    cdef long max_n
+    cdef double dz
+    cdef double max_dz
 
-    # for i in range(0,r*c):
-    for i in activeCores:
-        ngb[0] = i + 1
-        ngb[1] = i + c
-        ngb[2] = i - 1
-        ngb[3] = i - c
-        ngb[4] = i + c + 1
-        ngb[5] = i + c - 1
-        ngb[6] = i -c - 1
-        ngb[7] = i -c + 1
+    for i in prange(n_nodes, nogil=True, schedule="static"):
+        node = nodes[i]
 
         # Differences after filling can be very small, *1e3 to exaggerate those
         # Set to -1 at boundaries (active cell ==0)
         # If cells have equal slopes, the flow will be directed following
         # Landlab rotational ordening going first to cardial, then to diagonal cells
-        el_d[0] = (
-            el_dep_free[i] - el_dep_free[i + 1]
-        ) * 1e3 * activeCells[i + 1]- 1 + activeCells[i + 1]
-        el_d[1] = (
-            el_dep_free[i] - el_dep_free[i + c]
-        ) * 1e3 * activeCells[i + c] - 1 + activeCells[i + c]
-        el_d[2] = (
-            el_dep_free[i] - el_dep_free[i -1]
-        ) * 1e3 * activeCells[i - 1] - 1 + activeCells[i - 1]
-        el_d[3] = (
-            el_dep_free[i] - el_dep_free[i - c]
-        ) * 1e3 * activeCells[i - c] - 1 + activeCells[i - c]
-        el_d[4] = (
-            el_dep_free[i] - el_dep_free[i + c + 1]
-        ) * 1e3 / np.sqrt(2) * activeCells[i + c + 1] - 1 + activeCells[i + c + 1]
-        el_d[5] = (
-            el_dep_free[i] - el_dep_free[i + c - 1]
-        ) * 1e3 / np.sqrt(2) * activeCells[i + c - 1] - 1 + activeCells[i + c - 1]
-        el_d[6] = (
-            el_dep_free[i] - el_dep_free[i - c - 1]
-        ) * 1e3 / np.sqrt(2) * activeCells[i - c - 1] - 1 + activeCells[i - c - 1]
-        el_d[7] = (
-            el_dep_free[i] - el_dep_free[i - c + 1]
-        ) * 1e3 / np.sqrt(2) * activeCells[i - c + 1] - 1 + activeCells[i - c + 1]
+        max_dz = 0.0
+        max_n = -1
+        for n in range(8):
+            offset = neighbor[n]
+            if is_active_cell[node + offset]:
+                dz = (
+                    z_at_node[node] - z_at_node[node + offset]
+                ) * one_over_distance_to_neighbor[n]
 
-        # check to see if pixel is not a lake, if a lake, drain to itself
-        if np.max(el_d) >= 0:
-            idx = np.argmax(el_d)
-            receivers[i] = ngb[idx]
-            distance_receiver[i] = dist[idx]
-            rec_link[i] = adj_link[i][idx]
-            # Slope over original dem can have negative values, but we set
-            # it to zero here in analogy to the other Landlab LakeFiller
-            steepest_slope[i] = np.maximum(
-                0, (el_ori[i] - el_ori[receivers[i]]) / distance_receiver[i]
+                if dz > max_dz:
+                    max_dz = dz
+                    max_n = n
+
+        if max_n >= 0:
+            receivers[node] = node + neighbor[max_n]
+            distance_receiver[node] = 1.0 / one_over_distance_to_neighbor[max_n]
+            receiver_link[node] = adj_link[node, max_n]
+            steepest_slope[node] = max(
+                0,
+                (
+                    z_original[node] - z_original[receivers[node]]
+                ) * one_over_distance_to_neighbor[max_n]
             )
         else:
-            receivers[i] = i
-            rec_link[i] = -1
-            steepest_slope[i] = 0
+            receivers[node] = node
+            receiver_link[node] = -1
+            steepest_slope[node] = 0.0
 
-cpdef _D8_FlowAcc(
-    np.ndarray[DTYPE_FLOAT_t, ndim=1] a,
-    np.ndarray[DTYPE_FLOAT_t, ndim=1] q,
-    np.ndarray[DTYPE_INT_t, ndim=1] stack_flip,
-    np.ndarray[DTYPE_INT_t, ndim=1] receivers,
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+def _accumulate_at_reciever_nodes(
+    const id_t [:] nodes,
+    const id_t [:] receiver_node_at_node,
+    const cython.floating [:] value_at_node,
+    cython.floating [:] receiver_value_at_node,
 ):
-    """
-    Accumulates drainage area and discharge, permitting transmission losses.
-    """
-    cdef int donor
+    cdef long i
+    cdef long node
+
+    with nogil:
+        for i in range(len(nodes)):
+            node = nodes[i]
+            receiver_value_at_node[receiver_node_at_node[node]] += value_at_node[node]
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+cpdef _accumulate_flow_d8(
+    cython.floating [:] a,
+    cython.floating [:] q,
+    const id_t [:] stack_flip,
+    const id_t [:] receivers,
+):
+    """Accumulates drainage area and discharge, permitting transmission losses."""
+    cdef long donor
+    cdef long rcvr
 
     # Work from upstream to downstream.
-    for donor in stack_flip:
-        rcvr = receivers[donor]
-        a[rcvr] += a[donor]
-        q[rcvr] += q[donor]
+    with nogil:
+        for donor in stack_flip:
+            rcvr = receivers[donor]
+            a[rcvr] += a[donor]
+            q[rcvr] += q[donor]
