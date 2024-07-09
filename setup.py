@@ -23,6 +23,7 @@ cython_files = (
     "landlab/components/flow_router/ext/single_flow/priority_routing/breach.pyx",
     "landlab/components/overland_flow/_neighbors_at_link.pyx",
     "landlab/components/priority_flood_flow_router/cfuncs.pyx",
+    "landlab/components/priority_flood_flow_router/_d8_flow_routing.pyx",
     "landlab/components/space/ext/calc_qs.pyx",
     "landlab/components/space/ext/calc_sequential_ero_depo.pyx",
     "landlab/components/stream_power/cfuncs.pyx",
