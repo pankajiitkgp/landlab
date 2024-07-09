@@ -25,14 +25,15 @@ from landlab import RasterModelGrid
 from landlab.components.priority_flood_flow_router._d8_flow_routing import (
     _calc_slope_to_d8,
 )
-from landlab.components.priority_flood_flow_router._d8_flow_routing import (
-    _find_steepest_d8_neighbor_at_nodes,
-)
+from landlab.components.priority_flood_flow_router._d8_flow_routing import _find_d8_node
 from landlab.components.priority_flood_flow_router._d8_flow_routing import (
     _find_receiver_d8_link,
 )
-from landlab.components.priority_flood_flow_router._d8_flow_routing import _find_d8_node
+from landlab.components.priority_flood_flow_router._d8_flow_routing import (
+    _find_steepest_d8_neighbor_at_nodes,
+)
 from landlab.components.priority_flood_flow_router.cfuncs import _accumulate_flow_d8
+
 # from landlab.components.priority_flood_flow_router.cfuncs import _route_flow_d8
 from landlab.grid.nodestatus import NodeStatus
 from landlab.utils.return_array import return_array_at_node
@@ -725,58 +726,22 @@ class PriorityFloodFlowRouter(Component):
         is_active_node = self._grid.status_at_node != NodeStatus.CLOSED
         active_nodes = self.grid.core_nodes[is_active_node[self.grid.core_nodes]]
 
-        # recvr_link = np.full(self._grid.number_of_nodes, -1, dtype=int)
-        # receivers = np.full(self._grid.number_of_nodes, -1, dtype=int)
-        # distance_receiver = np.zeros(self._grid.number_of_nodes, dtype=float)
-        # steepest_slope = np.zeros(self._grid.number_of_nodes, dtype=float)
-
-        # _route_flow_d8(
-        #     self._grid.shape,
-        #     (self._grid.dx, self._grid.dy),
-        #     receivers,
-        #     distance_receiver,
-        #     steepest_slope,
-        #     self._depression_free_dem.reshape(self.grid.number_of_nodes),
-        #     self._surface_values,
-        #     active_nodes,
-        #     is_active_node.view(np.int8),
-        #     self._grid.d8s_at_node,
-        #     recvr_link,
-        # )
-
-        # d8_receiver_at_node, steepest_slope_at_node = find_steepest_d8_neighbor(
-        #     self.grid,
-        #     self._depression_free_dem.reshape(self.grid.number_of_nodes),
-        #     nodes=active_nodes,
-        #     with_slopes=True,
-        # )
-
-        d8_receiver_at_node = np.full(self.grid.number_of_nodes, -1, dtype=int)
-        steepest_slope_at_node = np.zeros(self._grid.number_of_nodes, dtype=float)
-        _find_steepest_d8_neighbor_at_nodes(
-            self.grid.shape,
-            (self._grid.dx, self._grid.dy),
-            active_nodes,
-            is_active_node.view(np.int8),
+        steepest_slope_at_node, d8_receiver_at_node = calc_steepest_d8_slope(
+            self.grid,
             self._depression_free_dem.reshape(self.grid.number_of_nodes),
-            d8_receiver_at_node,
-            steepest_slope_at_node,
+            nodes=active_nodes,
+            is_active_node=is_active_node,
+            with_neighbors=True,
         )
 
-        receiver_link_at_node = np.full(self._grid.number_of_nodes, -1, dtype=int)
-        _find_receiver_d8_link(
-            active_nodes,
-            d8_receiver_at_node,
-            self.grid.d8s_at_node,
-            receiver_link_at_node,
+        receiver_link_at_node = find_d8_link(
+            self.grid, d8_receiver_at_node, nodes=active_nodes
         )
 
-        receiver_node_at_node = np.full(self._grid.number_of_nodes, -1, dtype=int)
-        _find_d8_node(
-            self.grid.shape,
-            active_nodes,
+        receiver_node_at_node = find_d8_node(
+            self.grid,
             d8_receiver_at_node,
-            receiver_node_at_node,
+            nodes=active_nodes,
         )
 
         steepest_slope_of_original = calc_slope_to_d8(
@@ -785,15 +750,7 @@ class PriorityFloodFlowRouter(Component):
             d8_receiver_at_node,
             nodes=active_nodes,
         )
-        # steepest_slope_of_original = np.zeros(self._grid.number_of_nodes, dtype=float)
-        # _calc_slope_to_d8(
-        #     self.grid.shape,
-        #     (self._grid.dx, self._grid.dy),
-        #     active_nodes,
-        #     self._surface_values,
-        #     d8_receiver_at_node,
-        #     steepest_slope_of_original,
-        # )
+
         steepest_slope_at_node[steepest_slope_of_original < 0.0] = 0.0
 
         # Calcualte flow accumulation
@@ -1028,28 +985,111 @@ def calc_slope_to_d8(
     return slope_at_d8
 
 
-def find_steepest_d8_neighbor(
+def find_d8_node(
+    grid,
+    d8_neighbor_at_node,
+    nodes=None,
+):
+    if nodes is None:
+        nodes = grid.core_nodes
+
+    d8_node_at_node = np.full(grid.number_of_nodes, -1, dtype=int)
+    _find_d8_node(
+        grid.shape,
+        np.asarray(nodes),
+        np.asarray(d8_neighbor_at_node).reshape(-1),
+        d8_node_at_node,
+    )
+
+    return d8_node_at_node
+
+
+def find_d8_link(
+    grid,
+    d8_neighbor_at_node,
+    nodes=None,
+):
+    if nodes is None:
+        nodes = grid.core_nodes
+
+    d8_link_at_node = np.full(grid.number_of_nodes, -1, dtype=int)
+    _find_receiver_d8_link(
+        np.asarray(nodes),
+        d8_neighbor_at_node,
+        grid.d8s_at_node,
+        d8_link_at_node,
+    )
+
+    return d8_link_at_node
+
+
+def calc_steepest_d8_slope(
     grid,
     z_at_node,
-    with_slopes=False,
+    nodes=None,
+    is_active_node=None,
+    with_neighbors=False,
 ):
-    is_active_node = grid.status_at_node != NodeStatus.CLOSED
-    active_nodes = grid.core_nodes[is_active_node[grid.core_nodes]]
+    """Find the steepest slope to a d8 neighbor.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from landlab import RasterModelGrid
+    >>> from landlab.components.priority_flood_flow_router.priority_flood_flow_router import (
+    ...     calc_steepest_d8_slope,
+    ... )
+
+    >>> grid = RasterModelGrid((3, 4), xy_spacing=(4.0, 3.0))
+    >>> z_at_node = [
+    ...     [0.0, 1.0, 5.0, 13.0],
+    ...     [0.0, 1.0, 5.0, 13.0],
+    ...     [0.0, 1.0, 5.0, 13.0],
+    ... ]
+    >>> calc_steepest_d8_slope(grid, z_at_node).reshape(grid.shape)
+    array([[0.  , 0.  , 0.  , 0.  ],
+           [0.  , 0.25, 1.  , 0.  ],
+           [0.  , 0.  , 0.  , 0.  ]])
+    >>> _, d8_neighbors = calc_steepest_d8_slope(grid, z_at_node, with_neighbors=True)
+    >>> d8_neighbors.reshape(grid.shape)
+    array([[-1, -1, -1, -1],
+           [-1,  2,  2, -1],
+           [-1, -1, -1, -1]])
+
+    >>> z_at_node = [
+    ...     [0.0, 15.0, 30.0, 30.0],
+    ...     [10.0, 30.0, 30.0, 30.0],
+    ...     [20.0, 30.0, 30.0, 30.0],
+    ... ]
+    >>> calc_steepest_d8_slope(grid, z_at_node).reshape(grid.shape)
+    array([[0., 0., 0., 0.],
+           [0., 6., 3., 0.],
+           [0., 0., 0., 0.]])
+    >>> _, d8_neighbors = calc_steepest_d8_slope(grid, z_at_node, with_neighbors=True)
+    >>> d8_neighbors.reshape(grid.shape)
+    array([[-1, -1, -1, -1],
+           [-1,  6,  6, -1],
+           [-1, -1, -1, -1]])
+    """
+    if nodes is None:
+        nodes = grid.core_nodes
+    if is_active_node is None:
+        is_active_node = grid.status_at_node != NodeStatus.CLOSED
 
     d8_receiver_at_node = np.full(grid.number_of_nodes, -1, dtype=int)
-    steepest_slope = np.zeros(_grid.number_of_nodes, dtype=float)
+    steepest_slope = np.zeros(grid.number_of_nodes, dtype=float)
 
     _find_steepest_d8_neighbor_at_nodes(
         grid.shape,
         (grid.dx, grid.dy),
-        active_nodes,
+        np.asarray(nodes),
         is_active_node.view(np.int8),
-        z_at_node,
+        np.asarray(z_at_node).reshape(-1),
         d8_receiver_at_node,
         steepest_slope,
     )
 
-    if with_slopes:
-        return d8_receiver_at_node
+    if with_neighbors:
+        return steepest_slope, d8_receiver_at_node
     else:
-        return d8_receiver_at_node, steepest_slope
+        return steepest_slope
