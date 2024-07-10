@@ -611,7 +611,7 @@ class PriorityFloodFlowRouter(Component):
         if update_depressions:
             self.remove_depressions(flow_metric=flow_metric)
         if flow_metric == "D8":
-            self._FlowAcc_D8(hill_flow=hill_flow)
+            self._accumulate_flow_d8(hill_flow=hill_flow)
         else:
             closed_boundary_values = self._depression_free_dem[self._closed == 1]
             self._depression_free_dem[self._closed == 1] = np.inf
@@ -708,7 +708,7 @@ class PriorityFloodFlowRouter(Component):
                     self._slope[rcvrs == -1] = 0
                     self._recvr_link[:] = recvr_link
 
-    def _FlowAcc_D8(self, hill_flow=False):
+    def _accumulate_flow_d8(self, hill_flow=False):
         """
         Function to calcualte flow accumulation using the D8 flow algorithm.
 
