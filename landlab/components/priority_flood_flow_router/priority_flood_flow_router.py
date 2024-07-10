@@ -13,6 +13,8 @@ of flow accumulator one and two.
 @author: benjaminCampforts
 """
 
+from __future__ import annotations
+
 import copy as cp
 from functools import partial
 
@@ -990,6 +992,36 @@ def find_d8_node(
     d8_neighbor_at_node,
     nodes=None,
 ):
+    """Find d8 neighbor nodes.
+
+    Parameters
+    ----------
+    grid : RasterModelGrid
+        A Landlab grid.
+    d8_neighbor_at_node : array-like of int
+        A d8 neighbor for each grid node.
+    nodes : array-like of int, optional
+        Array of nodes on which to operate. The default is to operate
+        on all *core* nodes.
+
+    Examples
+    --------
+    >>> from landlab import RasterModelGrid
+    >>> from landlab.components.priority_flood_flow_router.priority_flood_flow_router import (
+    ...     find_d8_node,
+    ... )
+
+    >>> grid = RasterModelGrid((3, 4), xy_spacing=(4.0, 3.0))
+    >>> d8_neighbors_at_node = [
+    ...     [-1, -1, -1, -1],
+    ...     [-1, 7, 3, -1],
+    ...     [-1, -1, -1, -1],
+    ... ]
+    >>> find_d8_node(grid, d8_neighbors_at_node).reshape(grid.shape)
+    array([[-1, -1, -1, -1],
+           [-1,  2,  2, -1],
+           [-1, -1, -1, -1]])
+    """
     if nodes is None:
         nodes = grid.core_nodes
 
@@ -1009,13 +1041,43 @@ def find_d8_link(
     d8_neighbor_at_node,
     nodes=None,
 ):
+    """Find links to d8 neighbors.
+
+    Parameters
+    ----------
+    grid : RasterModelGrid
+        A Landlab grid.
+    d8_neighbor_at_node : array-like of int
+        A d8 neighbor for each grid node.
+    nodes : array-like of int, optional
+        Array of nodes on which to operate. The default is to operate
+        on all *core* nodes.
+
+    Examples
+    --------
+    >>> from landlab import RasterModelGrid
+    >>> from landlab.components.priority_flood_flow_router.priority_flood_flow_router import (
+    ...     find_d8_link,
+    ... )
+
+    >>> grid = RasterModelGrid((3, 4), xy_spacing=(4.0, 3.0))
+    >>> d8_neighbors_at_node = [
+    ...     [-1, -1, -1, -1],
+    ...     [-1, 7, 3, -1],
+    ...     [-1, -1, -1, -1],
+    ... ]
+    >>> find_d8_link(grid, d8_neighbors_at_node).reshape(grid.shape)
+    array([[-1, -1, -1, -1],
+           [-1, 20,  5, -1],
+           [-1, -1, -1, -1]])
+    """
     if nodes is None:
         nodes = grid.core_nodes
 
     d8_link_at_node = np.full(grid.number_of_nodes, -1, dtype=int)
     _find_receiver_d8_link(
         np.asarray(nodes),
-        d8_neighbor_at_node,
+        np.asarray(d8_neighbor_at_node).reshape(-1),
         grid.d8s_at_node,
         d8_link_at_node,
     )
@@ -1032,9 +1094,25 @@ def calc_steepest_d8_slope(
 ):
     """Find the steepest slope to a d8 neighbor.
 
+    Parameters
+    ----------
+    grid : RasterModelGrid
+        A Landlab grid.
+    z_at_node : array-like of float
+        Array of values at grid nodes.
+    nodes : array-like of int, optional
+        Array of nodes for which to calculate gradients. The default
+        is to operate on all *core* nodes.
+    is_active_node : array-like of bool
+        Array that indicates if a node is "active". Only slopes between
+        *active* nodes are considered. If not provided, all nodes are
+        considered *active*.
+    with_neighbors : bool, optional
+        If `True` return the corresponding d8 neighbor to which
+        the steepest slope was found.
+
     Examples
     --------
-    >>> import numpy as np
     >>> from landlab import RasterModelGrid
     >>> from landlab.components.priority_flood_flow_router.priority_flood_flow_router import (
     ...     calc_steepest_d8_slope,
