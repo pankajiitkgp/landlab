@@ -90,23 +90,6 @@ cpdef _route_flow_d8(
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
-def _accumulate_at_reciever_nodes(
-    const id_t [:] nodes,
-    const id_t [:] receiver_node_at_node,
-    const cython.floating [:] value_at_node,
-    cython.floating [:] receiver_value_at_node,
-):
-    cdef long i
-    cdef long node
-
-    with nogil:
-        for i in range(len(nodes)):
-            node = nodes[i]
-            receiver_value_at_node[receiver_node_at_node[node]] += value_at_node[node]
-
-
-@cython.boundscheck(False)
-@cython.wraparound(False)
 cpdef _accumulate_flow_d8(
     cython.floating [:] a,
     cython.floating [:] q,

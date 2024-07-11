@@ -199,3 +199,31 @@ def _calc_slope_to_d8(
             d8_slope_at_node[node] = (
                 z_at_node[node] - z_at_node[node + neighbor[d8]]
             ) * one_over_distance_to_d8[d8]
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+def _accumulate_at_receiver_node(
+    const id_t [:] nodes,
+    const id_t [:] receiver_node_at_node,
+    const cython.floating [:] value_at_node,
+    cython.floating [:] receiver_value_at_node,
+):
+    cdef long i
+    cdef long node
+    cdef long donor_node
+    cdef long receiver_node
+    cdef long n_nodes = len(value_at_node)
+    cdef long n_donor_nodes = len(nodes)
+
+    for node in prange(n_nodes, nogil=True, schedule="static"):
+        receiver_value_at_node[node] = value_at_node[node]
+
+    with nogil:
+        for i in range(n_donor_nodes):
+            donor_node = nodes[i]
+            receiver_node = receiver_node_at_node[donor_node]
+            if receiver_node >= 0:
+                receiver_value_at_node[receiver_node] += (
+                    receiver_value_at_node[donor_node]
+                )
