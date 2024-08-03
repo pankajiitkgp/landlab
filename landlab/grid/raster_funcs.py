@@ -411,7 +411,7 @@ def neighbor_to_arrow(x, diagonals_ok=True):
 
     Examples
     --------
-    >>> from landlab.components.flow_director.flow_director_d8 import neighbor_to_arrow
+    >>> from landlab.grid.raster_funcs import neighbor_to_arrow
     >>> x = [
     ...     [0, 0, 1, 2],
     ...     [0, 0, 3, 10],
