@@ -72,7 +72,7 @@ from .profiler import TrickleDownProfiler
 from .radiation import Radiation
 from .sink_fill import SinkFiller
 from .sink_fill import SinkFillerBarnes
-from .snow import SnowDegreeDay
+from .snow import SnowDegreeDay, SnowEnergyBalance
 from .soil_moisture import SoilInfiltrationGreenAmpt
 from .soil_moisture import SoilMoisture
 from .space import Space
@@ -159,6 +159,7 @@ COMPONENTS = [
     SimpleSubmarineDiffuser,
     SinkFiller,
     SinkFillerBarnes,
+    SnowEnergyBalance,
     SnowDegreeDay,
     SoilMoisture,
     SoilInfiltrationGreenAmpt,
